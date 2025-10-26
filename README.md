@@ -294,17 +294,17 @@ We welcome contributions! This is a massive undertaking and community help is ap
 - 🔄 Cosmos CosmWasm implementation
 - 🔄 Cardano Aiken implementation
 
-### Q1 2025
+### Q1 2026
 - [ ] Testnet deployments (all chains)
 - [ ] Security audits
 - [ ] Cross-chain integration tests
 
-### Q2 2025
+### Q2 2026
 - [ ] Mainnet deployments
 - [ ] Developer documentation site
 - [ ] SDK libraries for easy integration
 
-### Q3 2025
+### Q3 2026
 - [ ] Additional chain support (Solana, Polkadot)
 - [ ] Advanced features (interest rates, quality routing)
 - [ ] Community governance
