@@ -1,0 +1,19 @@
+[package]
+name = "xrpl_financial_primitives"
+version = "1.0.0"
+authors = ["Quigles1337 <adz@alphx.io>"]
+
+[addresses]
+xrpl_primitives = "_"
+
+[dependencies.AptosFramework]
+git = "https://github.com/aptos-labs/aptos-core.git"
+rev = "mainnet"
+subdir = "aptos-move/framework/aptos-framework"
+
+[dependencies.AptosStdlib]
+git = "https://github.com/aptos-labs/aptos-core.git"
+rev = "mainnet"
+subdir = "aptos-move/framework/aptos-stdlib"
+
+[dev-dependencies]
