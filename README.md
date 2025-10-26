@@ -365,7 +365,7 @@ MIT License - See [LICENSE](./LICENSE) for details.
 
 **Author**: [Quigles1337](https://github.com/Quigles1337)
 
-Built with ❤️ for the future of decentralized finance.
+Built with ❤️ for the future of finance 4.0.
 
 ---
 
