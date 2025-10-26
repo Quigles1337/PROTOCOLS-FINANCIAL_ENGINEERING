@@ -1,0 +1,25 @@
+[workspace]
+members = [
+  "contracts/trust_lines",
+  "contracts/payment_channels",
+  "contracts/escrow",
+  "contracts/checks",
+  "contracts/dex_orders",
+  "contracts/did_manager",
+  "contracts/deposit_authorization",
+  "contracts/deposit_preauth",
+  "contracts/signer_list",
+  "contracts/account_delete",
+]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["Quigles1337 <adz@alphx.io>"]
+edition = "2021"
+license = "MIT"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
