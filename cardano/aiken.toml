@@ -1,0 +1,16 @@
+name = "xrpl-financial-primitives"
+version = "0.1.0"
+plutus = "v3"
+compiler = "v1.0.28-alpha"
+license = "MIT"
+description = "XRPL-inspired financial primitives for Cardano"
+
+[repository]
+user = "Quigles1337"
+project = "PROTOCOLS-FINANCIAL_ENGINEERING"
+platform = "github"
+
+[[dependencies]]
+name = "aiken-lang/stdlib"
+version = "1.9.0"
+source = "github"
