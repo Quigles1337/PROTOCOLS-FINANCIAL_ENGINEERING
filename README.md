@@ -2,10 +2,7 @@
 
 **Universal implementation of XRPL's revolutionary financial primitives across all major blockchain platforms**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Ethereum](https://img.shields.io/badge/Ethereum-Solidity-blue)](./ethereum)
-[![Cosmos](https://img.shields.io/badge/Cosmos-CosmWasm-purple)](./cosmos)
-[![Cardano](https://img.shields.io/badge/Cardano-Aiken-red)](./cardano)
+
 
 ---
 
