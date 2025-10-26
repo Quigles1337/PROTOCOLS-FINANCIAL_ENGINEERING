@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "contracts/trust-lines",
+    "contracts/payment-channels",
+    "contracts/escrow",
+    "contracts/checks",
+    "contracts/dex-orders",
+    "contracts/did-manager",
+    "contracts/deposit-authorization",
+    "contracts/deposit-preauth",
+    "contracts/signer-list",
+    "contracts/account-delete",
+]
+
+[profile.release]
+codegen-units = 1
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+overflow-checks = true
