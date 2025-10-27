@@ -1,0 +1,222 @@
+;; XRPL Payment Channels for TON
+;; Streaming micropayments with off-chain efficiency
+
+#include "stdlib.fc";
+
+;; Storage schema
+;; channels: dict(int id => (slice sender, slice receiver, int balance, int total_claimed, int expiration, int status))
+
+;; Error codes
+const int err::not_authorized = 100;
+const int err::channel_expired = 101;
+const int err::insufficient_funds = 102;
+const int err::invalid_amount = 103;
+const int err::channel_not_open = 104;
+
+;; Status
+const int status::open = 0;
+const int status::closed = 1;
+
+;; Storage
+global cell channels;
+global int next_id;
+
+() load_data() impure {
+    var ds = get_data().begin_parse();
+    channels = ds~load_dict();
+    next_id = ds~load_uint(64);
+}
+
+() save_data() impure {
+    set_data(begin_cell()
+        .store_dict(channels)
+        .store_uint(next_id, 64)
+    .end_cell());
+}
+
+;; Create channel
+int create_channel(slice sender, slice receiver, int deposit, int expiration) impure {
+    throw_unless(err::invalid_amount, deposit > 0);
+    throw_unless(err::channel_expired, expiration > now());
+
+    int channel_id = next_id;
+    next_id += 1;
+
+    cell channel = begin_cell()
+        .store_slice(sender)
+        .store_slice(receiver)
+        .store_coins(deposit)
+        .store_coins(0)
+        .store_uint(expiration, 64)
+        .store_uint(status::open, 8)
+    .end_cell();
+
+    channels~udict_set_ref(64, channel_id, channel);
+    save_data();
+
+    return channel_id;
+}
+
+;; Add funds
+() add_funds(slice sender, int channel_id, int amount) impure {
+    throw_unless(err::invalid_amount, amount > 0);
+
+    (cell value, int found) = channels.udict_get_ref?(64, channel_id);
+    throw_unless(err::channel_not_open, found);
+
+    var ds = value.begin_parse();
+    slice ch_sender = ds~load_msg_addr();
+    slice ch_receiver = ds~load_msg_addr();
+    int balance = ds~load_coins();
+    int total_claimed = ds~load_coins();
+    int expiration = ds~load_uint(64);
+    int ch_status = ds~load_uint(8);
+
+    throw_unless(err::not_authorized, equal_slices(sender, ch_sender));
+    throw_unless(err::channel_not_open, ch_status == status::open);
+
+    balance += amount;
+
+    cell updated = begin_cell()
+        .store_slice(ch_sender)
+        .store_slice(ch_receiver)
+        .store_coins(balance)
+        .store_coins(total_claimed)
+        .store_uint(expiration, 64)
+        .store_uint(ch_status, 8)
+    .end_cell();
+
+    channels~udict_set_ref(64, channel_id, updated);
+    save_data();
+}
+
+;; Claim funds
+() claim_funds(slice receiver, int channel_id, int amount) impure {
+    (cell value, int found) = channels.udict_get_ref?(64, channel_id);
+    throw_unless(err::channel_not_open, found);
+
+    var ds = value.begin_parse();
+    slice ch_sender = ds~load_msg_addr();
+    slice ch_receiver = ds~load_msg_addr();
+    int balance = ds~load_coins();
+    int total_claimed = ds~load_coins();
+    int expiration = ds~load_uint(64);
+    int ch_status = ds~load_uint(8);
+
+    throw_unless(err::not_authorized, equal_slices(receiver, ch_receiver));
+    throw_unless(err::channel_not_open, ch_status == status::open);
+    throw_unless(err::channel_expired, now() < expiration);
+
+    int available = balance - total_claimed;
+    throw_unless(err::insufficient_funds, amount <= available);
+
+    total_claimed += amount;
+
+    cell updated = begin_cell()
+        .store_slice(ch_sender)
+        .store_slice(ch_receiver)
+        .store_coins(balance)
+        .store_coins(total_claimed)
+        .store_uint(expiration, 64)
+        .store_uint(ch_status, 8)
+    .end_cell();
+
+    channels~udict_set_ref(64, channel_id, updated);
+    save_data();
+
+    ;; Send funds to receiver
+    send_raw_message(begin_cell()
+        .store_uint(0x10, 6)
+        .store_slice(ch_receiver)
+        .store_coins(amount)
+        .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+    .end_cell(), 1);
+}
+
+;; Close channel
+() close_channel(slice sender, int channel_id) impure {
+    (cell value, int found) = channels.udict_get_ref?(64, channel_id);
+    throw_unless(err::channel_not_open, found);
+
+    var ds = value.begin_parse();
+    slice ch_sender = ds~load_msg_addr();
+    slice ch_receiver = ds~load_msg_addr();
+    int balance = ds~load_coins();
+    int total_claimed = ds~load_coins();
+    int expiration = ds~load_uint(64);
+    int ch_status = ds~load_uint(8);
+
+    int is_authorized = equal_slices(sender, ch_sender) | equal_slices(sender, ch_receiver);
+    throw_unless(err::not_authorized, is_authorized);
+    throw_unless(err::channel_not_open, ch_status == status::open);
+
+    int remaining = balance - total_claimed;
+
+    cell updated = begin_cell()
+        .store_slice(ch_sender)
+        .store_slice(ch_receiver)
+        .store_coins(balance)
+        .store_coins(total_claimed)
+        .store_uint(expiration, 64)
+        .store_uint(status::closed, 8)
+    .end_cell();
+
+    channels~udict_set_ref(64, channel_id, updated);
+    save_data();
+
+    ;; Refund remaining to sender
+    if (remaining > 0) {
+        send_raw_message(begin_cell()
+            .store_uint(0x10, 6)
+            .store_slice(ch_sender)
+            .store_coins(remaining)
+            .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .end_cell(), 1);
+    }
+}
+
+;; Get methods
+int get_balance(int channel_id) method_id {
+    load_data();
+    (cell value, int found) = channels.udict_get_ref?(64, channel_id);
+    if (found) {
+        var ds = value.begin_parse();
+        ds~skip_bits(256 + 256);
+        return ds~load_coins();
+    }
+    return 0;
+}
+
+;; Receive internal message
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) {
+        return ();
+    }
+
+    load_data();
+
+    int op = in_msg_body~load_uint(32);
+    slice sender = in_msg_full.begin_parse().skip_bits(4).load_msg_addr();
+
+    if (op == 1) { ;; create_channel
+        slice receiver = in_msg_body~load_msg_addr();
+        int expiration = in_msg_body~load_uint(64);
+        create_channel(sender, receiver, msg_value, expiration);
+    }
+
+    if (op == 2) { ;; add_funds
+        int channel_id = in_msg_body~load_uint(64);
+        add_funds(sender, channel_id, msg_value);
+    }
+
+    if (op == 3) { ;; claim_funds
+        int channel_id = in_msg_body~load_uint(64);
+        int amount = in_msg_body~load_coins();
+        claim_funds(sender, channel_id, amount);
+    }
+
+    if (op == 4) { ;; close_channel
+        int channel_id = in_msg_body~load_uint(64);
+        close_channel(sender, channel_id);
+    }
+}

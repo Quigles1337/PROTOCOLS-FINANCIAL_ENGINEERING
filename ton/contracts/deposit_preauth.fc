@@ -1,0 +1,164 @@
+;; XRPL Deposit Preauth for TON
+;; One-time pre-authorization tokens
+
+#include "stdlib.fc";
+
+;; Error codes
+const int err::invalid_amount = 100;
+const int err::preauth_not_found = 101;
+const int err::not_authorized = 102;
+const int err::not_active = 103;
+const int err::expired = 104;
+const int err::amount_exceeds_limit = 105;
+const int err::self_preauth = 106;
+
+;; Status
+const int status::active = 0;
+const int status::used = 1;
+const int status::revoked = 2;
+
+;; Storage
+global cell preauths;
+global int next_id;
+
+() load_data() impure {
+    var ds = get_data().begin_parse();
+    preauths = ds~load_dict();
+    next_id = ds~load_uint(64);
+}
+
+() save_data() impure {
+    set_data(begin_cell()
+        .store_dict(preauths)
+        .store_uint(next_id, 64)
+    .end_cell());
+}
+
+;; Create preauth
+int create_preauth(slice authorizer, slice authorized, int max_amount, int expiration) impure {
+    throw_if(err::self_preauth, equal_slices(authorizer, authorized));
+    throw_unless(err::invalid_amount, max_amount > 0);
+    throw_unless(err::expired, expiration > now());
+
+    int preauth_id = next_id;
+    next_id += 1;
+
+    cell preauth = begin_cell()
+        .store_slice(authorizer)
+        .store_slice(authorized)
+        .store_coins(max_amount)
+        .store_uint(expiration, 64)
+        .store_uint(status::active, 8)
+        .store_uint(now(), 64)
+    .end_cell();
+
+    preauths~udict_set_ref(64, preauth_id, preauth);
+    save_data();
+
+    return preauth_id;
+}
+
+;; Use preauth
+() use_preauth(slice authorized, int preauth_id, int amount) impure {
+    (cell value, int found) = preauths.udict_get_ref?(64, preauth_id);
+    throw_unless(err::preauth_not_found, found);
+
+    var ds = value.begin_parse();
+    slice authorizer = ds~load_msg_addr();
+    slice pre_authorized = ds~load_msg_addr();
+    int max_amount = ds~load_coins();
+    int expiration = ds~load_uint(64);
+    int pre_status = ds~load_uint(8);
+    int created_at = ds~load_uint(64);
+
+    throw_unless(err::not_authorized, equal_slices(authorized, pre_authorized));
+    throw_unless(err::not_active, pre_status == status::active);
+    throw_unless(err::expired, now() < expiration);
+    throw_unless(err::amount_exceeds_limit, amount <= max_amount);
+
+    cell updated = begin_cell()
+        .store_slice(authorizer)
+        .store_slice(pre_authorized)
+        .store_coins(max_amount)
+        .store_uint(expiration, 64)
+        .store_uint(status::used, 8)
+        .store_uint(created_at, 64)
+    .end_cell();
+
+    preauths~udict_set_ref(64, preauth_id, updated);
+    save_data();
+}
+
+;; Revoke preauth
+() revoke_preauth(slice authorizer, int preauth_id) impure {
+    (cell value, int found) = preauths.udict_get_ref?(64, preauth_id);
+    throw_unless(err::preauth_not_found, found);
+
+    var ds = value.begin_parse();
+    slice pre_authorizer = ds~load_msg_addr();
+    slice authorized = ds~load_msg_addr();
+    int max_amount = ds~load_coins();
+    int expiration = ds~load_uint(64);
+    int pre_status = ds~load_uint(8);
+    int created_at = ds~load_uint(64);
+
+    throw_unless(err::not_authorized, equal_slices(authorizer, pre_authorizer));
+    throw_unless(err::not_active, pre_status == status::active);
+
+    cell updated = begin_cell()
+        .store_slice(pre_authorizer)
+        .store_slice(authorized)
+        .store_coins(max_amount)
+        .store_uint(expiration, 64)
+        .store_uint(status::revoked, 8)
+        .store_uint(created_at, 64)
+    .end_cell();
+
+    preauths~udict_set_ref(64, preauth_id, updated);
+    save_data();
+}
+
+;; Get methods
+int is_valid(int preauth_id) method_id {
+    load_data();
+    (cell value, int found) = preauths.udict_get_ref?(64, preauth_id);
+
+    if (found) {
+        var ds = value.begin_parse();
+        ds~skip_bits(256 + 256 + 124);
+        int expiration = ds~load_uint(64);
+        int pre_status = ds~load_uint(8);
+        return (pre_status == status::active) & (now() < expiration);
+    }
+    return 0;
+}
+
+;; Receive internal message
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) {
+        return ();
+    }
+
+    load_data();
+
+    int op = in_msg_body~load_uint(32);
+    slice sender = in_msg_full.begin_parse().skip_bits(4).load_msg_addr();
+
+    if (op == 1) { ;; create_preauth
+        slice authorized = in_msg_body~load_msg_addr();
+        int max_amount = in_msg_body~load_coins();
+        int expiration = in_msg_body~load_uint(64);
+        create_preauth(sender, authorized, max_amount, expiration);
+    }
+
+    if (op == 2) { ;; use_preauth
+        int preauth_id = in_msg_body~load_uint(64);
+        int amount = in_msg_body~load_coins();
+        use_preauth(sender, preauth_id, amount);
+    }
+
+    if (op == 3) { ;; revoke_preauth
+        int preauth_id = in_msg_body~load_uint(64);
+        revoke_preauth(sender, preauth_id);
+    }
+}

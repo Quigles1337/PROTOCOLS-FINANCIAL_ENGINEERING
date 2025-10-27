@@ -1,0 +1,254 @@
+;; XRPL Account Delete for TON
+;; Account lifecycle management with grace period
+
+#include "stdlib.fc";
+
+;; Error codes
+const int err::account_exists = 100;
+const int err::account_not_found = 101;
+const int err::not_authorized = 102;
+const int err::account_not_active = 103;
+const int err::no_deletion_pending = 104;
+const int err::grace_period_not_elapsed = 105;
+const int err::self_beneficiary = 106;
+const int err::invalid_deposit = 107;
+
+;; Status
+const int status::active = 0;
+const int status::pending_deletion = 1;
+const int status::deleted = 2;
+
+;; Grace period: 24 hours (86400 seconds)
+const int grace_period = 86400;
+
+;; Storage
+global cell accounts;  ;; account_hash => (owner, balance, status, deletion_request_time, beneficiary, created_at)
+
+() load_data() impure {
+    var ds = get_data().begin_parse();
+    accounts = ds~load_dict();
+}
+
+() save_data() impure {
+    set_data(begin_cell()
+        .store_dict(accounts)
+    .end_cell());
+}
+
+;; Create account
+() create_account(slice owner) impure {
+    int owner_hash = slice_hash(owner);
+    (cell value, int found) = accounts.udict_get_ref?(256, owner_hash);
+    throw_if(err::account_exists, found);
+
+    cell account = begin_cell()
+        .store_slice(owner)
+        .store_coins(0)
+        .store_uint(status::active, 8)
+        .store_uint(0, 64)  ;; deletion_request_time
+        .store_uint(0, 2)  ;; no beneficiary (empty maybe)
+        .store_uint(now(), 64)
+    .end_cell();
+
+    accounts~udict_set_ref(256, owner_hash, account);
+    save_data();
+}
+
+;; Deposit funds
+() deposit(slice owner, int amount) impure {
+    throw_unless(err::invalid_deposit, amount > 0);
+
+    int owner_hash = slice_hash(owner);
+    (cell value, int found) = accounts.udict_get_ref?(256, owner_hash);
+    throw_unless(err::account_not_found, found);
+
+    var ds = value.begin_parse();
+    slice acc_owner = ds~load_msg_addr();
+    int balance = ds~load_coins();
+    int acc_status = ds~load_uint(8);
+    int deletion_request_time = ds~load_uint(64);
+    int has_beneficiary = ds~load_uint(2);
+    slice beneficiary = begin_cell().end_cell().begin_parse();
+    if (has_beneficiary) {
+        beneficiary = ds~load_msg_addr();
+    }
+    int created_at = ds~load_uint(64);
+
+    throw_unless(err::account_not_active, acc_status == status::active);
+
+    balance += amount;
+
+    builder account_builder = begin_cell()
+        .store_slice(acc_owner)
+        .store_coins(balance)
+        .store_uint(acc_status, 8)
+        .store_uint(deletion_request_time, 64);
+
+    if (has_beneficiary) {
+        account_builder = account_builder.store_uint(1, 2).store_slice(beneficiary);
+    } else {
+        account_builder = account_builder.store_uint(0, 2);
+    }
+
+    account_builder = account_builder.store_uint(created_at, 64);
+
+    accounts~udict_set_ref(256, owner_hash, account_builder.end_cell());
+    save_data();
+}
+
+;; Request deletion
+() request_deletion(slice owner, slice beneficiary) impure {
+    throw_if(err::self_beneficiary, equal_slices(owner, beneficiary));
+
+    int owner_hash = slice_hash(owner);
+    (cell value, int found) = accounts.udict_get_ref?(256, owner_hash);
+    throw_unless(err::account_not_found, found);
+
+    var ds = value.begin_parse();
+    slice acc_owner = ds~load_msg_addr();
+    int balance = ds~load_coins();
+    int acc_status = ds~load_uint(8);
+    ds~skip_bits(64 + 2);  ;; skip deletion_request_time and has_beneficiary
+    int created_at = ds~load_uint(64);
+
+    throw_unless(err::account_not_active, acc_status == status::active);
+
+    cell updated = begin_cell()
+        .store_slice(acc_owner)
+        .store_coins(balance)
+        .store_uint(status::pending_deletion, 8)
+        .store_uint(now(), 64)
+        .store_uint(1, 2)
+        .store_slice(beneficiary)
+        .store_uint(created_at, 64)
+    .end_cell();
+
+    accounts~udict_set_ref(256, owner_hash, updated);
+    save_data();
+}
+
+;; Cancel deletion
+() cancel_deletion(slice owner) impure {
+    int owner_hash = slice_hash(owner);
+    (cell value, int found) = accounts.udict_get_ref?(256, owner_hash);
+    throw_unless(err::account_not_found, found);
+
+    var ds = value.begin_parse();
+    slice acc_owner = ds~load_msg_addr();
+    int balance = ds~load_coins();
+    int acc_status = ds~load_uint(8);
+    ds~skip_bits(64 + 2);  ;; skip deletion_request_time and has_beneficiary
+    int created_at = ds~load_uint(64);
+
+    throw_unless(err::no_deletion_pending, acc_status == status::pending_deletion);
+
+    cell updated = begin_cell()
+        .store_slice(acc_owner)
+        .store_coins(balance)
+        .store_uint(status::active, 8)
+        .store_uint(0, 64)
+        .store_uint(0, 2)
+        .store_uint(created_at, 64)
+    .end_cell();
+
+    accounts~udict_set_ref(256, owner_hash, updated);
+    save_data();
+}
+
+;; Execute deletion
+() execute_deletion(slice account_id) impure {
+    int account_hash = slice_hash(account_id);
+    (cell value, int found) = accounts.udict_get_ref?(256, account_hash);
+    throw_unless(err::account_not_found, found);
+
+    var ds = value.begin_parse();
+    slice acc_owner = ds~load_msg_addr();
+    int balance = ds~load_coins();
+    int acc_status = ds~load_uint(8);
+    int deletion_request_time = ds~load_uint(64);
+    int has_beneficiary = ds~load_uint(2);
+    slice beneficiary = ds~load_msg_addr();
+    int created_at = ds~load_uint(64);
+
+    throw_unless(err::no_deletion_pending, acc_status == status::pending_deletion);
+
+    int elapsed = now() - deletion_request_time;
+    throw_unless(err::grace_period_not_elapsed, elapsed >= grace_period);
+
+    cell updated = begin_cell()
+        .store_slice(acc_owner)
+        .store_coins(0)
+        .store_uint(status::deleted, 8)
+        .store_uint(deletion_request_time, 64)
+        .store_uint(1, 2)
+        .store_slice(beneficiary)
+        .store_uint(created_at, 64)
+    .end_cell();
+
+    accounts~udict_set_ref(256, account_hash, updated);
+    save_data();
+
+    ;; Transfer balance to beneficiary
+    if (balance > 0) {
+        send_raw_message(begin_cell()
+            .store_uint(0x10, 6)
+            .store_slice(beneficiary)
+            .store_coins(balance)
+            .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .end_cell(), 1);
+    }
+}
+
+;; Get methods
+int can_delete(slice account_id) method_id {
+    load_data();
+    int account_hash = slice_hash(account_id);
+    (cell value, int found) = accounts.udict_get_ref?(256, account_hash);
+
+    if (found) {
+        var ds = value.begin_parse();
+        ds~skip_bits(256 + 124);
+        int acc_status = ds~load_uint(8);
+        int deletion_request_time = ds~load_uint(64);
+
+        if (acc_status == status::pending_deletion) {
+            int elapsed = now() - deletion_request_time;
+            return elapsed >= grace_period;
+        }
+    }
+    return 0;
+}
+
+;; Receive internal message
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) {
+        return ();
+    }
+
+    load_data();
+
+    int op = in_msg_body~load_uint(32);
+    slice sender = in_msg_full.begin_parse().skip_bits(4).load_msg_addr();
+
+    if (op == 1) { ;; create_account
+        create_account(sender);
+    }
+
+    if (op == 2) { ;; deposit
+        deposit(sender, msg_value);
+    }
+
+    if (op == 3) { ;; request_deletion
+        slice beneficiary = in_msg_body~load_msg_addr();
+        request_deletion(sender, beneficiary);
+    }
+
+    if (op == 4) { ;; cancel_deletion
+        cancel_deletion(sender);
+    }
+
+    if (op == 5) { ;; execute_deletion
+        slice account_id = in_msg_body~load_msg_addr();
+        execute_deletion(account_id);
+    }
+}

@@ -1,0 +1,211 @@
+;; XRPL Trust Lines for TON
+;; Bilateral credit networks with payment rippling
+
+#include "stdlib.fc";
+
+;; Storage schema
+;; trust_lines: dict(slice key => (slice account1, slice account2, int limit1, int limit2, int balance, int is_negative))
+
+;; Error codes
+const int err::invalid_limit = 100;
+const int err::insufficient_limit = 101;
+const int err::not_authorized = 102;
+const int err::self_trust_line = 103;
+const int err::trust_line_exists = 104;
+const int err::trust_line_not_found = 105;
+
+;; Storage functions
+global cell trust_lines;
+
+() load_data() impure {
+    var ds = get_data().begin_parse();
+    trust_lines = ds~load_dict();
+}
+
+() save_data() impure {
+    set_data(begin_cell()
+        .store_dict(trust_lines)
+    .end_cell());
+}
+
+;; Helper: generate key from two addresses
+slice generate_key(slice addr1, slice addr2) inline {
+    if (addr1.slice_hash() < addr2.slice_hash()) {
+        return begin_cell()
+            .store_slice(addr1)
+            .store_slice(addr2)
+        .end_cell().begin_parse();
+    } else {
+        return begin_cell()
+            .store_slice(addr2)
+            .store_slice(addr1)
+        .end_cell().begin_parse();
+    }
+}
+
+;; Create trust line
+() create_trust_line(slice sender, slice counterparty, int limit) impure {
+    throw_if(err::self_trust_line, equal_slices(sender, counterparty));
+    throw_unless(err::invalid_limit, limit > 0);
+
+    slice key = generate_key(sender, counterparty);
+    (cell value, int found) = trust_lines.udict_get_ref?(256, slice_hash(key));
+    throw_if(err::trust_line_exists, found);
+
+    ;; Determine account1 and account2 based on ordering
+    int sender_hash = sender.slice_hash();
+    int counterparty_hash = counterparty.slice_hash();
+
+    cell trust_line = begin_cell()
+        .store_slice(sender)
+        .store_slice(counterparty)
+        .store_uint(limit, 128)
+        .store_uint(0, 128)
+        .store_uint(0, 128)
+        .store_int(0, 1)
+    .end_cell();
+
+    trust_lines~udict_set_ref(256, slice_hash(key), trust_line);
+    save_data();
+}
+
+;; Update limit
+() update_limit(slice sender, slice counterparty, int new_limit) impure {
+    throw_unless(err::invalid_limit, new_limit > 0);
+
+    slice key = generate_key(sender, counterparty);
+    (cell value, int found) = trust_lines.udict_get_ref?(256, slice_hash(key));
+    throw_unless(err::trust_line_not_found, found);
+
+    var ds = value.begin_parse();
+    slice account1 = ds~load_msg_addr();
+    slice account2 = ds~load_msg_addr();
+    int limit1 = ds~load_uint(128);
+    int limit2 = ds~load_uint(128);
+    int balance = ds~load_uint(128);
+    int is_negative = ds~load_int(1);
+
+    if (equal_slices(sender, account1)) {
+        limit1 = new_limit;
+    } else {
+        limit2 = new_limit;
+    }
+
+    cell updated = begin_cell()
+        .store_slice(account1)
+        .store_slice(account2)
+        .store_uint(limit1, 128)
+        .store_uint(limit2, 128)
+        .store_uint(balance, 128)
+        .store_int(is_negative, 1)
+    .end_cell();
+
+    trust_lines~udict_set_ref(256, slice_hash(key), updated);
+    save_data();
+}
+
+;; Ripple payment
+() ripple_payment(slice sender, slice receiver, int amount) impure {
+    throw_unless(err::invalid_limit, amount > 0);
+
+    slice key = generate_key(sender, receiver);
+    (cell value, int found) = trust_lines.udict_get_ref?(256, slice_hash(key));
+    throw_unless(err::trust_line_not_found, found);
+
+    var ds = value.begin_parse();
+    slice account1 = ds~load_msg_addr();
+    slice account2 = ds~load_msg_addr();
+    int limit1 = ds~load_uint(128);
+    int limit2 = ds~load_uint(128);
+    int balance = ds~load_uint(128);
+    int is_negative = ds~load_int(1);
+
+    int is_account1 = equal_slices(sender, account1);
+
+    if (is_account1) {
+        if (is_negative) {
+            if (amount >= balance) {
+                balance = amount - balance;
+                is_negative = 0;
+            } else {
+                balance = balance - amount;
+            }
+        } else {
+            int new_balance = balance + amount;
+            throw_unless(err::insufficient_limit, new_balance <= limit2);
+            balance = new_balance;
+        }
+    } else {
+        if (~ is_negative) {
+            if (amount >= balance) {
+                balance = amount - balance;
+                is_negative = -1;
+            } else {
+                balance = balance - amount;
+            }
+        } else {
+            int new_balance = balance + amount;
+            throw_unless(err::insufficient_limit, new_balance <= limit1);
+            balance = new_balance;
+        }
+    }
+
+    cell updated = begin_cell()
+        .store_slice(account1)
+        .store_slice(account2)
+        .store_uint(limit1, 128)
+        .store_uint(limit2, 128)
+        .store_uint(balance, 128)
+        .store_int(is_negative, 1)
+    .end_cell();
+
+    trust_lines~udict_set_ref(256, slice_hash(key), updated);
+    save_data();
+}
+
+;; Get methods
+(int, int) get_balance(slice account1, slice account2) method_id {
+    load_data();
+    slice key = generate_key(account1, account2);
+    (cell value, int found) = trust_lines.udict_get_ref?(256, slice_hash(key));
+
+    if (found) {
+        var ds = value.begin_parse();
+        ds~skip_bits(256 + 256 + 128 + 128);
+        int balance = ds~load_uint(128);
+        int is_negative = ds~load_int(1);
+        return (balance, is_negative);
+    }
+
+    return (0, 0);
+}
+
+;; Receive internal message
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) {
+        return ();
+    }
+
+    load_data();
+
+    int op = in_msg_body~load_uint(32);
+    slice sender = in_msg_full.begin_parse().skip_bits(4).load_msg_addr();
+
+    if (op == 1) { ;; create_trust_line
+        slice counterparty = in_msg_body~load_msg_addr();
+        int limit = in_msg_body~load_uint(128);
+        create_trust_line(sender, counterparty, limit);
+    }
+
+    if (op == 2) { ;; update_limit
+        slice counterparty = in_msg_body~load_msg_addr();
+        int new_limit = in_msg_body~load_uint(128);
+        update_limit(sender, counterparty, new_limit);
+    }
+
+    if (op == 3) { ;; ripple_payment
+        slice receiver = in_msg_body~load_msg_addr();
+        int amount = in_msg_body~load_uint(128);
+        ripple_payment(sender, receiver, amount);
+    }
+}

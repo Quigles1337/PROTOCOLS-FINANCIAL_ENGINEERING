@@ -1,0 +1,171 @@
+;; XRPL DID Manager for TON
+;; W3C DID decentralized identity management
+
+#include "stdlib.fc";
+
+;; Error codes
+const int err::did_exists = 100;
+const int err::did_not_found = 101;
+const int err::not_authorized = 102;
+const int err::not_active = 103;
+const int err::account_has_did = 104;
+
+;; Storage
+global cell dids;  ;; did_hash => (slice did, slice owner, slice document_uri, int active, int created_at, int updated_at)
+global cell account_to_did;  ;; account_hash => did_hash
+
+() load_data() impure {
+    var ds = get_data().begin_parse();
+    dids = ds~load_dict();
+    account_to_did = ds~load_dict();
+}
+
+() save_data() impure {
+    set_data(begin_cell()
+        .store_dict(dids)
+        .store_dict(account_to_did)
+    .end_cell());
+}
+
+;; Register DID
+() register_did(slice owner, slice did, slice document_uri) impure {
+    int did_hash = slice_hash(did);
+    int owner_hash = slice_hash(owner);
+
+    (cell value, int found) = dids.udict_get_ref?(256, did_hash);
+    throw_if(err::did_exists, found);
+
+    (cell acc_value, int acc_found) = account_to_did.udict_get_ref?(256, owner_hash);
+    throw_if(err::account_has_did, acc_found);
+
+    int timestamp = now();
+
+    cell did_document = begin_cell()
+        .store_slice(did)
+        .store_slice(owner)
+        .store_slice(document_uri)
+        .store_int(-1, 1)  ;; active = true
+        .store_uint(timestamp, 64)
+        .store_uint(timestamp, 64)
+    .end_cell();
+
+    dids~udict_set_ref(256, did_hash, did_document);
+    account_to_did~udict_set_builder(256, owner_hash, begin_cell().store_uint(did_hash, 256));
+    save_data();
+}
+
+;; Update DID
+() update_did(slice owner, slice new_document_uri) impure {
+    int owner_hash = slice_hash(owner);
+
+    (cell acc_value, int acc_found) = account_to_did.udict_get_ref?(256, owner_hash);
+    throw_unless(err::did_not_found, acc_found);
+
+    int did_hash = acc_value.begin_parse().preload_uint(256);
+    (cell value, int found) = dids.udict_get_ref?(256, did_hash);
+    throw_unless(err::did_not_found, found);
+
+    var ds = value.begin_parse();
+    slice did = ds~load_ref().begin_parse();
+    slice doc_owner = ds~load_msg_addr();
+    ds~load_ref();  ;; skip old document_uri
+    int active = ds~load_int(1);
+    int created_at = ds~load_uint(64);
+
+    throw_unless(err::not_authorized, equal_slices(owner, doc_owner));
+    throw_unless(err::not_active, active);
+
+    cell updated = begin_cell()
+        .store_ref(begin_cell().store_slice(did).end_cell())
+        .store_slice(doc_owner)
+        .store_ref(begin_cell().store_slice(new_document_uri).end_cell())
+        .store_int(-1, 1)
+        .store_uint(created_at, 64)
+        .store_uint(now(), 64)
+    .end_cell();
+
+    dids~udict_set_ref(256, did_hash, updated);
+    save_data();
+}
+
+;; Revoke DID
+() revoke_did(slice owner) impure {
+    int owner_hash = slice_hash(owner);
+
+    (cell acc_value, int acc_found) = account_to_did.udict_get_ref?(256, owner_hash);
+    throw_unless(err::did_not_found, acc_found);
+
+    int did_hash = acc_value.begin_parse().preload_uint(256);
+    (cell value, int found) = dids.udict_get_ref?(256, did_hash);
+    throw_unless(err::did_not_found, found);
+
+    var ds = value.begin_parse();
+    slice did = ds~load_ref().begin_parse();
+    slice doc_owner = ds~load_msg_addr();
+    slice document_uri = ds~load_ref().begin_parse();
+    int active = ds~load_int(1);
+    int created_at = ds~load_uint(64);
+
+    throw_unless(err::not_authorized, equal_slices(owner, doc_owner));
+    throw_unless(err::not_active, active);
+
+    cell updated = begin_cell()
+        .store_ref(begin_cell().store_slice(did).end_cell())
+        .store_slice(doc_owner)
+        .store_ref(begin_cell().store_slice(document_uri).end_cell())
+        .store_int(0, 1)  ;; active = false
+        .store_uint(created_at, 64)
+        .store_uint(now(), 64)
+    .end_cell();
+
+    dids~udict_set_ref(256, did_hash, updated);
+    save_data();
+}
+
+;; Get methods
+slice resolve_did(slice did) method_id {
+    load_data();
+    int did_hash = slice_hash(did);
+    (cell value, int found) = dids.udict_get_ref?(256, did_hash);
+
+    if (found) {
+        var ds = value.begin_parse();
+        ds~load_ref();  ;; skip did
+        ds~load_msg_addr();  ;; skip owner
+        slice document_uri = ds~load_ref().begin_parse();
+        int active = ds~load_int(1);
+
+        if (active) {
+            return document_uri;
+        }
+    }
+
+    return begin_cell().end_cell().begin_parse();
+}
+
+;; Receive internal message
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) {
+        return ();
+    }
+
+    load_data();
+
+    int op = in_msg_body~load_uint(32);
+    slice sender = in_msg_full.begin_parse().skip_bits(4).load_msg_addr();
+
+    if (op == 1) { ;; register_did
+        slice did = in_msg_body~load_ref().begin_parse();
+        slice document_uri = in_msg_body~load_ref().begin_parse();
+        register_did(sender, did, document_uri);
+    }
+
+    if (op == 2) { ;; update_did
+        slice new_document_uri = in_msg_body~load_ref().begin_parse();
+        update_did(sender, new_document_uri);
+    }
+
+    if (op == 3) { ;; revoke_did
+        revoke_did(sender);
+    }
+}

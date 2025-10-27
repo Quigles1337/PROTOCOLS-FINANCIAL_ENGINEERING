@@ -1,0 +1,195 @@
+;; XRPL Deposit Authorization for TON
+;; Multi-tier KYC/AML compliance framework
+
+#include "stdlib.fc";
+
+;; Error codes
+const int err::invalid_amount = 100;
+const int err::auth_exists = 101;
+const int err::auth_not_found = 102;
+const int err::not_authorized = 103;
+const int err::not_active = 104;
+const int err::expired = 105;
+const int err::amount_exceeds_limit = 106;
+const int err::exceeds_tier_limit = 107;
+const int err::self_authorize = 108;
+
+;; KYC Tiers
+const int tier::basic = 0;
+const int tier::standard = 1;
+const int tier::premium = 2;
+const int tier::institutional = 3;
+
+;; Storage
+global cell authorizations;  ;; key(authorizer+authorized) => (authorizer, authorized, max_amount, used_amount, expiration, tier, active, created_at)
+
+() load_data() impure {
+    var ds = get_data().begin_parse();
+    authorizations = ds~load_dict();
+}
+
+() save_data() impure {
+    set_data(begin_cell()
+        .store_dict(authorizations)
+    .end_cell());
+}
+
+;; Helper: generate key
+int generate_key(slice authorizer, slice authorized) inline {
+    return slice_hash(begin_cell()
+        .store_slice(authorizer)
+        .store_slice(authorized)
+    .end_cell().begin_parse());
+}
+
+;; Helper: get tier max amount
+int get_tier_max_amount(int tier_level) inline {
+    if (tier_level == tier::basic) { return 1000000000; }  ;; 1 TON
+    if (tier_level == tier::standard) { return 10000000000; }  ;; 10 TON
+    if (tier_level == tier::premium) { return 100000000000; }  ;; 100 TON
+    return 1000000000000;  ;; 1000 TON (institutional)
+}
+
+;; Create authorization
+() create_authorization(slice authorizer, slice authorized, int max_amount, int expiration, int tier_level) impure {
+    throw_if(err::self_authorize, equal_slices(authorizer, authorized));
+    throw_unless(err::invalid_amount, max_amount > 0);
+    throw_unless(err::expired, expiration > now());
+    throw_unless(err::exceeds_tier_limit, max_amount <= get_tier_max_amount(tier_level));
+
+    int key = generate_key(authorizer, authorized);
+    (cell value, int found) = authorizations.udict_get_ref?(256, key);
+    throw_if(err::auth_exists, found);
+
+    cell authorization = begin_cell()
+        .store_slice(authorizer)
+        .store_slice(authorized)
+        .store_coins(max_amount)
+        .store_coins(0)  ;; used_amount
+        .store_uint(expiration, 64)
+        .store_uint(tier_level, 8)
+        .store_int(-1, 1)  ;; active
+        .store_uint(now(), 64)
+    .end_cell();
+
+    authorizations~udict_set_ref(256, key, authorization);
+    save_data();
+}
+
+;; Use authorization
+() use_authorization(slice authorized, slice authorizer, int amount) impure {
+    int key = generate_key(authorizer, authorized);
+    (cell value, int found) = authorizations.udict_get_ref?(256, key);
+    throw_unless(err::auth_not_found, found);
+
+    var ds = value.begin_parse();
+    slice auth_authorizer = ds~load_msg_addr();
+    slice auth_authorized = ds~load_msg_addr();
+    int max_amount = ds~load_coins();
+    int used_amount = ds~load_coins();
+    int expiration = ds~load_uint(64);
+    int tier_level = ds~load_uint(8);
+    int active = ds~load_int(1);
+    int created_at = ds~load_uint(64);
+
+    throw_unless(err::not_active, active);
+    throw_unless(err::expired, now() < expiration);
+    throw_unless(err::amount_exceeds_limit, (used_amount + amount) <= max_amount);
+
+    used_amount += amount;
+
+    cell updated = begin_cell()
+        .store_slice(auth_authorizer)
+        .store_slice(auth_authorized)
+        .store_coins(max_amount)
+        .store_coins(used_amount)
+        .store_uint(expiration, 64)
+        .store_uint(tier_level, 8)
+        .store_int(active, 1)
+        .store_uint(created_at, 64)
+    .end_cell();
+
+    authorizations~udict_set_ref(256, key, updated);
+    save_data();
+}
+
+;; Revoke authorization
+() revoke_authorization(slice authorizer, slice authorized) impure {
+    int key = generate_key(authorizer, authorized);
+    (cell value, int found) = authorizations.udict_get_ref?(256, key);
+    throw_unless(err::auth_not_found, found);
+
+    var ds = value.begin_parse();
+    slice auth_authorizer = ds~load_msg_addr();
+    slice auth_authorized = ds~load_msg_addr();
+    int max_amount = ds~load_coins();
+    int used_amount = ds~load_coins();
+    int expiration = ds~load_uint(64);
+    int tier_level = ds~load_uint(8);
+    int active = ds~load_int(1);
+    int created_at = ds~load_uint(64);
+
+    throw_unless(err::not_authorized, equal_slices(authorizer, auth_authorizer));
+    throw_unless(err::not_active, active);
+
+    cell updated = begin_cell()
+        .store_slice(auth_authorizer)
+        .store_slice(auth_authorized)
+        .store_coins(max_amount)
+        .store_coins(used_amount)
+        .store_uint(expiration, 64)
+        .store_uint(tier_level, 8)
+        .store_int(0, 1)  ;; active = false
+        .store_uint(created_at, 64)
+    .end_cell();
+
+    authorizations~udict_set_ref(256, key, updated);
+    save_data();
+}
+
+;; Get methods
+int get_remaining_amount(slice authorizer, slice authorized) method_id {
+    load_data();
+    int key = generate_key(authorizer, authorized);
+    (cell value, int found) = authorizations.udict_get_ref?(256, key);
+
+    if (found) {
+        var ds = value.begin_parse();
+        ds~skip_bits(256 + 256);
+        int max_amount = ds~load_coins();
+        int used_amount = ds~load_coins();
+        return max_amount - used_amount;
+    }
+    return 0;
+}
+
+;; Receive internal message
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) {
+        return ();
+    }
+
+    load_data();
+
+    int op = in_msg_body~load_uint(32);
+    slice sender = in_msg_full.begin_parse().skip_bits(4).load_msg_addr();
+
+    if (op == 1) { ;; create_authorization
+        slice authorized = in_msg_body~load_msg_addr();
+        int max_amount = in_msg_body~load_coins();
+        int expiration = in_msg_body~load_uint(64);
+        int tier_level = in_msg_body~load_uint(8);
+        create_authorization(sender, authorized, max_amount, expiration, tier_level);
+    }
+
+    if (op == 2) { ;; use_authorization
+        slice authorizer = in_msg_body~load_msg_addr();
+        int amount = in_msg_body~load_coins();
+        use_authorization(sender, authorizer, amount);
+    }
+
+    if (op == 3) { ;; revoke_authorization
+        slice authorized = in_msg_body~load_msg_addr();
+        revoke_authorization(sender, authorized);
+    }
+}

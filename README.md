@@ -161,6 +161,42 @@ We're bringing XRPL's financial innovation to **EVERY major blockchain**:
 
 [View Solana Implementation →](./solana)
 
+### ✅ Sui (Move)
+
+**Status**: Production-ready - All 10 primitives complete!
+
+- **Location**: [./sui](./sui)
+- **Language**: Move (Sui Framework)
+- **Lines**: 1,917 lines of production code
+- **Highlights**:
+  - All 10 XRPL primitives in Sui Move
+  - Object-centric architecture with owned/shared objects
+  - Native parallel execution support
+  - Balance<SUI> for native token handling
+  - Keccak256 hash verification for HTLC
+  - Event emissions for off-chain indexing
+  - Production-grade security patterns
+
+[View Sui Implementation →](./sui)
+
+### ✅ TON (FunC)
+
+**Status**: Production-ready - All 10 primitives complete!
+
+- **Location**: [./ton](./ton)
+- **Language**: FunC (TON smart contract language)
+- **Lines**: 2,101 lines of production code
+- **Highlights**:
+  - All 10 XRPL primitives for Telegram's blockchain
+  - Cell-based storage architecture
+  - Message-passing for native TON transfers
+  - Dictionary (hashmap) storage for scalability
+  - TVM-optimized for gas efficiency
+  - Telegram bot integration ready
+  - 700M+ potential users via Telegram
+
+[View TON Implementation →](./ton)
+
 ### 🔄 Stellar (Native)
 
 **Status**: Production-ready
@@ -355,6 +391,8 @@ Primitives work together:
 | Stacks    | TBD   | TBD      | ✅ Complete (10/10 contracts, 1,718 lines) |
 | NEAR      | TBD   | TBD      | ✅ Complete (10/10 contracts, 1,479 lines) |
 | Solana    | TBD   | TBD      | ✅ Complete (10/10 programs, 2,048 lines) |
+| Sui       | TBD   | TBD      | ✅ Complete (10/10 modules, 1,917 lines) |
+| TON       | TBD   | TBD      | ✅ Complete (10/10 contracts, 2,101 lines) |
 | Stellar   | TBD   | TBD      | ✅ Complete |
 | Cosmos    | TBD   | TBD      | 🔄 In Progress |
 | Cardano   | TBD   | TBD      | 🔄 In Progress |
@@ -406,6 +444,8 @@ We welcome contributions! This is a massive undertaking and community help is ap
 - ✅ Stacks implementation complete (10/10 contracts, 1,718 lines)
 - ✅ NEAR implementation complete (10/10 contracts, 1,479 lines)
 - ✅ Solana implementation complete (10/10 programs, 2,048 lines)
+- ✅ Sui implementation complete (10/10 modules, 1,917 lines)
+- ✅ TON implementation complete (10/10 contracts, 2,101 lines)
 - ✅ Stellar implementation complete
 - 🔄 Cosmos CosmWasm implementation
 - 🔄 Cardano Aiken implementation
@@ -454,15 +494,17 @@ We welcome contributions! This is a massive undertaking and community help is ap
 ## 📊 **Project Statistics**
 
 ```
-Total Implementations:     10 chains (Ethereum, Aptos, Stacks, NEAR, Solana, Stellar, Cosmos, Cardano, Polkadot, Algorand)
-Total Contracts:          93+ smart contracts/modules
-Total Lines of Code:      26,758+ lines
+Total Implementations:     12 chains (Ethereum, Aptos, Stacks, NEAR, Solana, Sui, TON, Stellar, Cosmos, Cardano, Polkadot, Algorand)
+Total Contracts:          113+ smart contracts/modules
+Total Lines of Code:      30,776+ lines
 Test Coverage:            541+ tests (Ethereum)
 Production Ready:         Ethereum ✅ (541 tests)
                           Aptos ✅ (10/10 modules, 2,871 lines)
                           Stacks ✅ (10/10 contracts, 1,718 lines)
                           NEAR ✅ (10/10 contracts, 1,479 lines)
                           Solana ✅ (10/10 programs, 2,048 lines)
+                          Sui ✅ (10/10 modules, 1,917 lines)
+                          TON ✅ (10/10 contracts, 2,101 lines)
                           Stellar ✅
                           Algorand (3/10) 🔄
 ```

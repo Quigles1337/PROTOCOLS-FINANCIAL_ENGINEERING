@@ -1,0 +1,198 @@
+;; XRPL DEX Orders for TON
+;; On-chain orderbook with partial fills
+
+#include "stdlib.fc";
+
+;; Error codes
+const int err::not_authorized = 100;
+const int err::order_not_available = 101;
+const int err::invalid_amount = 102;
+const int err::invalid_fill = 103;
+
+;; Status
+const int status::open = 0;
+const int status::partially_filled = 1;
+const int status::filled = 2;
+const int status::cancelled = 3;
+
+;; Storage
+global cell orders;
+global int next_id;
+
+() load_data() impure {
+    var ds = get_data().begin_parse();
+    orders = ds~load_dict();
+    next_id = ds~load_uint(64);
+}
+
+() save_data() impure {
+    set_data(begin_cell()
+        .store_dict(orders)
+        .store_uint(next_id, 64)
+    .end_cell());
+}
+
+;; Place order
+int place_order(slice creator, int sell_amount, int buy_amount) impure {
+    throw_unless(err::invalid_amount, (sell_amount > 0) & (buy_amount > 0));
+
+    int order_id = next_id;
+    next_id += 1;
+
+    cell order = begin_cell()
+        .store_slice(creator)
+        .store_coins(sell_amount)
+        .store_coins(buy_amount)
+        .store_coins(0)  ;; filled_amount
+        .store_uint(status::open, 8)
+        .store_uint(now(), 64)
+    .end_cell();
+
+    orders~udict_set_ref(64, order_id, order);
+    save_data();
+
+    return order_id;
+}
+
+;; Fill order
+() fill_order(slice filler, int order_id, int fill_amount, int payment) impure {
+    (cell value, int found) = orders.udict_get_ref?(64, order_id);
+    throw_unless(err::order_not_available, found);
+
+    var ds = value.begin_parse();
+    slice creator = ds~load_msg_addr();
+    int sell_amount = ds~load_coins();
+    int buy_amount = ds~load_coins();
+    int filled_amount = ds~load_coins();
+    int ord_status = ds~load_uint(8);
+    int created_at = ds~load_uint(64);
+
+    throw_unless(err::order_not_available, (ord_status == status::open) | (ord_status == status::partially_filled));
+
+    int remaining = sell_amount - filled_amount;
+    throw_unless(err::invalid_fill, (fill_amount > 0) & (fill_amount <= remaining));
+
+    ;; Calculate proportional payment
+    int required_payment = (fill_amount * buy_amount) / sell_amount;
+    throw_unless(err::invalid_amount, payment == required_payment);
+
+    filled_amount += fill_amount;
+    int new_status = ord_status;
+    if (filled_amount == sell_amount) {
+        new_status = status::filled;
+    } else {
+        new_status = status::partially_filled;
+    }
+
+    cell updated = begin_cell()
+        .store_slice(creator)
+        .store_coins(sell_amount)
+        .store_coins(buy_amount)
+        .store_coins(filled_amount)
+        .store_uint(new_status, 8)
+        .store_uint(created_at, 64)
+    .end_cell();
+
+    orders~udict_set_ref(64, order_id, updated);
+    save_data();
+
+    ;; Send fill amount to filler
+    send_raw_message(begin_cell()
+        .store_uint(0x10, 6)
+        .store_slice(filler)
+        .store_coins(fill_amount)
+        .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+    .end_cell(), 1);
+
+    ;; Send payment to creator
+    send_raw_message(begin_cell()
+        .store_uint(0x10, 6)
+        .store_slice(creator)
+        .store_coins(payment)
+        .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+    .end_cell(), 1);
+}
+
+;; Cancel order
+() cancel_order(slice creator, int order_id) impure {
+    (cell value, int found) = orders.udict_get_ref?(64, order_id);
+    throw_unless(err::order_not_available, found);
+
+    var ds = value.begin_parse();
+    slice ord_creator = ds~load_msg_addr();
+    int sell_amount = ds~load_coins();
+    int buy_amount = ds~load_coins();
+    int filled_amount = ds~load_coins();
+    int ord_status = ds~load_uint(8);
+    int created_at = ds~load_uint(64);
+
+    throw_unless(err::not_authorized, equal_slices(creator, ord_creator));
+    throw_unless(err::order_not_available, (ord_status == status::open) | (ord_status == status::partially_filled));
+
+    int remaining = sell_amount - filled_amount;
+
+    cell updated = begin_cell()
+        .store_slice(ord_creator)
+        .store_coins(sell_amount)
+        .store_coins(buy_amount)
+        .store_coins(filled_amount)
+        .store_uint(status::cancelled, 8)
+        .store_uint(created_at, 64)
+    .end_cell();
+
+    orders~udict_set_ref(64, order_id, updated);
+    save_data();
+
+    ;; Refund remaining to creator
+    if (remaining > 0) {
+        send_raw_message(begin_cell()
+            .store_uint(0x10, 6)
+            .store_slice(ord_creator)
+            .store_coins(remaining)
+            .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .end_cell(), 1);
+    }
+}
+
+;; Get methods
+int get_remaining_amount(int order_id) method_id {
+    load_data();
+    (cell value, int found) = orders.udict_get_ref?(64, order_id);
+    if (found) {
+        var ds = value.begin_parse();
+        ds~skip_bits(256);
+        int sell_amount = ds~load_coins();
+        ds~load_coins();
+        int filled_amount = ds~load_coins();
+        return sell_amount - filled_amount;
+    }
+    return 0;
+}
+
+;; Receive internal message
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) {
+        return ();
+    }
+
+    load_data();
+
+    int op = in_msg_body~load_uint(32);
+    slice sender = in_msg_full.begin_parse().skip_bits(4).load_msg_addr();
+
+    if (op == 1) { ;; place_order
+        int buy_amount = in_msg_body~load_coins();
+        place_order(sender, msg_value, buy_amount);
+    }
+
+    if (op == 2) { ;; fill_order
+        int order_id = in_msg_body~load_uint(64);
+        int fill_amount = in_msg_body~load_coins();
+        fill_order(sender, order_id, fill_amount, msg_value);
+    }
+
+    if (op == 3) { ;; cancel_order
+        int order_id = in_msg_body~load_uint(64);
+        cancel_order(sender, order_id);
+    }
+}
