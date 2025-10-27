@@ -131,13 +131,14 @@ We're bringing XRPL's financial innovation to **EVERY major blockchain**:
 
 - **Location**: [./near](./near)
 - **Language**: Rust with near-sdk 5.0
-- **Lines**: ~1,220 lines of production code (estimated)
+- **Lines**: 1,479 lines of production code
 - **Highlights**:
   - All 10 XRPL primitives in gas-efficient Rust
   - UnorderedMap storage for scalability
   - Promise-based async operations
   - BorshSerialize for efficient storage
   - #[payable] for NEAR token deposits
+  - SHA-256 hash verification for HTLC
   - Production-grade security measures
 
 [View NEAR Implementation →](./near)
@@ -352,7 +353,7 @@ Primitives work together:
 | Ethereum  | 541   | ~90%     | ✅ Complete |
 | Aptos     | TBD   | TBD      | ✅ Complete (10/10 modules, 2,871 lines) |
 | Stacks    | TBD   | TBD      | ✅ Complete (10/10 contracts, 1,718 lines) |
-| NEAR      | TBD   | TBD      | ✅ Complete (10/10 contracts, ~1,220 lines) |
+| NEAR      | TBD   | TBD      | ✅ Complete (10/10 contracts, 1,479 lines) |
 | Solana    | TBD   | TBD      | ✅ Complete (10/10 programs, 2,048 lines) |
 | Stellar   | TBD   | TBD      | ✅ Complete |
 | Cosmos    | TBD   | TBD      | 🔄 In Progress |
@@ -403,7 +404,7 @@ We welcome contributions! This is a massive undertaking and community help is ap
 - ✅ Ethereum implementation complete (541 tests)
 - ✅ Aptos implementation complete (10/10 modules, 2,871 lines)
 - ✅ Stacks implementation complete (10/10 contracts, 1,718 lines)
-- ✅ NEAR implementation complete (10/10 contracts, ~1,220 lines)
+- ✅ NEAR implementation complete (10/10 contracts, 1,479 lines)
 - ✅ Solana implementation complete (10/10 programs, 2,048 lines)
 - ✅ Stellar implementation complete
 - 🔄 Cosmos CosmWasm implementation
@@ -455,12 +456,12 @@ We welcome contributions! This is a massive undertaking and community help is ap
 ```
 Total Implementations:     10 chains (Ethereum, Aptos, Stacks, NEAR, Solana, Stellar, Cosmos, Cardano, Polkadot, Algorand)
 Total Contracts:          93+ smart contracts/modules
-Total Lines of Code:      26,499+ lines
+Total Lines of Code:      26,758+ lines
 Test Coverage:            541+ tests (Ethereum)
 Production Ready:         Ethereum ✅ (541 tests)
                           Aptos ✅ (10/10 modules, 2,871 lines)
                           Stacks ✅ (10/10 contracts, 1,718 lines)
-                          NEAR ✅ (10/10 contracts, ~1,220 lines)
+                          NEAR ✅ (10/10 contracts, 1,479 lines)
                           Solana ✅ (10/10 programs, 2,048 lines)
                           Stellar ✅
                           Algorand (3/10) 🔄
