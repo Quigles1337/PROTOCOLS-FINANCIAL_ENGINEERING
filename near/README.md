@@ -224,21 +224,21 @@ All contracts follow production-grade NEAR patterns:
 
 ```
 Total Contracts:         10
-Estimated Lines:         ~1,220 lines (Rust)
+Total Lines of Code:     1,479 lines (Rust)
 Language:               Rust with near-sdk 5.0
 Blockchain:             NEAR Protocol
 
 Contract Breakdown:
-  SignerList:           ~150 lines (Weighted multisig)
-  Escrow:               ~140 lines (Time/hash locks)
+  SignerList:           218 lines (Weighted multisig)
+  DepositAuth:          188 lines (KYC/AML compliance)
+  AccountDelete:        159 lines (Lifecycle management)
+  DEXOrders:            149 lines (Orderbook)
+  Escrow:               148 lines (Time/hash locks)
   TrustLines:           135 lines (Credit networks)
-  Checks:               ~130 lines (Deferred payments)
-  DepositAuth:          ~125 lines (KYC/AML compliance)
-  PaymentChannels:      ~120 lines (Streaming payments)
-  AccountDelete:        ~115 lines (Lifecycle management)
-  DEXOrders:            ~110 lines (Orderbook)
-  DepositPreauth:       ~100 lines (One-time tokens)
-  DIDManager:           ~95 lines (Decentralized identity)
+  Checks:               130 lines (Deferred payments)
+  PaymentChannels:      124 lines (Streaming payments)
+  DIDManager:           115 lines (Decentralized identity)
+  DepositPreauth:       113 lines (One-time tokens)
 ```
 
 ## Getting Started
