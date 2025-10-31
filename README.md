@@ -547,7 +547,7 @@ Built with ❤️ for the future of finance 4.0.
 
 - **GitHub Issues**: [Report bugs or request features](https://github.com/Quigles1337/PROTOCOLS-FINANCIAL_ENGINEERING/issues)
 - **Discussions**: [Join the conversation](https://github.com/Quigles1337/PROTOCOLS-FINANCIAL_ENGINEERING/discussions)
-- **Twitter**: [https://x.com/DARQ__Labs] or [https://x.com/______ADZ______] or [https://x.com/Karma_Coverage]
+- **Twitter**: [https://x.com/DARQ__Labs] or [https://x.com______ADZ______] or [https://x.com/Karma_Coverage]
 - **Discord**: Coming soon
 
 ---
