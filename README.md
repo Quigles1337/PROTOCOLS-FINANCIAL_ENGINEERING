@@ -1,6 +1,6 @@
 # XRPL-Inspired Financial Primitives
 
-# GOD BLESS THIS IS MY GIFT, LOVE ADZ
+# GOD BLESS THIS IS MY GIFT, LOVE ADZ. DO GOOD. WITH THIS FUNCTIONALITY COMES GREAT *RESPONSIBILITY* 🖤 
 
 **Universal implementation of XRPL's revolutionary financial primitives across all major blockchain platforms**
 
